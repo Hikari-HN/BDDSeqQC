@@ -10,7 +10,7 @@ from dd import autoref as _bdd
 
 
 def init_bdd(n, r):
-    global BDD, Fa, Fb, Fc, Fd
+    global BDD, Fa, Fb, Fc, Fd, k
     BDD = _bdd.BDD()
     for i in range(n):
         BDD.add_var('q%d' % i)
@@ -23,6 +23,7 @@ def init_bdd(n, r):
         Fb.append(BDD.false)
         Fc.append(BDD.false)
         Fd.append(BDD.false)
+    k = 0
 
 
 def init_basis_state(basis):
@@ -46,8 +47,8 @@ def Sum(A, B, C):
 def X(target):
     global Fa, Fb, Fc, Fd
     r = len(Fd)
-    trans = lambda x: BDD.let({'q%d' % target: BDD.false}, x) & BDD.var('q%d' % target) | (
-            BDD.let({'q%d' % target: BDD.true}, x) & ~BDD.var('q%d' % target))
+    trans = lambda x: (BDD.var('q%d' % target) & BDD.let({'q%d' % target: BDD.false}, x)) | (
+            ~BDD.var('q%d' % target) & BDD.let({'q%d' % target: BDD.true}, x))
     for i in range(r):
         Fa[i] = trans(Fa[i])
         Fb[i] = trans(Fb[i])
@@ -58,45 +59,171 @@ def X(target):
 def Y(target):
     global Fa, Fb, Fc, Fd
     r = len(Fd)
-    g = lambda x: BDD.let({'q%d' % target: BDD.false}, x) & BDD.var('q%d' % target) | (
-            BDD.let({'q%d' % target: BDD.true}, x) & ~BDD.var('q%d' % target))
-    d = lambda x: (BDD.var('q%d' % target) & x) | (~BDD.var('q%d' % target) & ~x)
+    g = lambda x: (BDD.var('q%d' % target) & BDD.let({'q%d' % target: BDD.false}, x)) | (
+            ~BDD.var('q%d' % target) & BDD.let({'q%d' % target: BDD.true}, x))
+    d1 = lambda x: (BDD.var('q%d' % target) & x) | (~BDD.var('q%d' % target) & ~x)
+    d2 = lambda x: (BDD.var('q%d' % target) & ~x) | (~BDD.var('q%d' % target) & x)
     Ca = []
     Ca.append(~BDD.var('q%d' % target))
-    for i in range(r - 1):
-        Da = d(g(Fc[i]))
+    tmpa = []
+    for i in range(r):
+        Da = d1(g(Fc[i]))
         Ca.append(Car(Da, BDD.false, Ca[i]))
-        Fa[i] = Sum(Da, BDD.false, Ca[i])
+        tmpa.append(Sum(Da, BDD.false, Ca[i]))
     Cb = []
-    Cb.append(BDD.var('q%d' % target))
-    for i in range(r - 1):
-        Db = d(g(Fd[i]))
+    Cb.append(~BDD.var('q%d' % target))
+    tmpb = []
+    for i in range(r):
+        Db = d1(g(Fd[i]))
         Cb.append(Car(Db, BDD.false, Cb[i]))
-        Fb[i] = Sum(Db, BDD.false, Cb[i])
+        tmpb.append(Sum(Db, BDD.false, Cb[i]))
     Cc = []
     Cc.append(BDD.var('q%d' % target))
-    for i in range(r - 1):
-        Dc = d(g(Fa[i]))
+    tmpc = []
+    for i in range(r):
+        Dc = d2(g(Fa[i]))
         Cc.append(Car(Dc, BDD.false, Cc[i]))
-        Fc[i] = Sum(Dc, BDD.false, Cc[i])
+        tmpc.append(Sum(Dc, BDD.false, Cc[i]))
     Cd = []
-    Cd.append(~BDD.var('q%d' % target))
-    for i in range(r - 1):
-        Dd = d(g(Fb[i]))
+    Cd.append(BDD.var('q%d' % target))
+    tmpd = []
+    for i in range(r):
+        Dd = d2(g(Fb[i]))
         Cd.append(Car(Dd, BDD.false, Cd[i]))
-        Fd[i] = Sum(Dd, BDD.false, Cd[i])
+        tmpd.append(Sum(Dd, BDD.false, Cd[i]))
+    # Overflow
+    # 先进行符号拓展，然后算出提前溢出的部分，再进行进行符号位判断
+    tmpa.append(Sum(d1(g(Fc[r - 1])), BDD.false, Ca[r]))
+    tmpb.append(Sum(d1(g(Fd[r - 1])), BDD.false, Cb[r]))
+    tmpc.append(Sum(d2(g(Fa[r - 1])), BDD.false, Cc[r]))
+    tmpd.append(Sum(d2(g(Fb[r - 1])), BDD.false, Cd[r]))
+    if tmpa[-1] == tmpa[-2] and tmpb[-1] == tmpb[-2] and tmpc[-1] == tmpc[-2] and tmpd[-1] == tmpd[-2]:
+        tmpa.pop()
+        tmpb.pop()
+        tmpc.pop()
+        tmpd.pop()
+    Fa = tmpa.copy()
+    Fb = tmpb.copy()
+    Fc = tmpc.copy()
+    Fd = tmpd.copy()
 
 
-num_qubits = 3
-r = 3
+def Z(target):
+    global Fa, Fb, Fc, Fd
+    r = len(Fd)
+    g = lambda x: (~BDD.var('q%d' % target) & x) | (BDD.var('q%d' % target) & ~x)
+
+    def trans(x):
+        Cx = []
+        Cx.append(BDD.var('q%d' % target))
+        tmpx = []
+        for i in range(r):
+            Gx = g(x[i])
+            Cx.append(Car(Gx, BDD.false, Cx[i]))
+            tmpx.append(Sum(Gx, BDD.false, Cx[i]))
+        tmpx.append(Sum(g(x[r - 1]), BDD.false, Cx[r]))
+        return tmpx.copy()
+
+    Fa = trans(Fa)
+    Fb = trans(Fb)
+    Fc = trans(Fc)
+    Fd = trans(Fd)
+    # Overflow
+    if Fa[-1] == Fa[-2] and Fb[-1] == Fb[-2] and Fc[-1] == Fc[-2] and Fd[-1] == Fd[-2]:
+        Fa.pop()
+        Fb.pop()
+        Fc.pop()
+        Fd.pop()
+
+
+def H(target):
+    global Fa, Fb, Fc, Fd, k
+    r = len(Fd)
+    g = lambda x: BDD.let({'q%d' % target: BDD.false}, x)
+    d = lambda x: (~BDD.var('q%d' % target) & BDD.let({'q%d' % target: BDD.true}, x)) | (BDD.var('q%d' % target) & ~x)
+
+    def trans(x):
+        Cx = []
+        Cx.append(BDD.var('q%d' % target))
+        tmpx = []
+        for i in range(r):
+            Gx = g(x[i])
+            Dx = d(x[i])
+            Cx.append(Car(Gx, Dx, Cx[i]))
+            tmpx.append(Sum(Gx, Dx, Cx[i]))
+        tmpx.append(Sum(g(x[r - 1]), d(x[r - 1]), Cx[r]))
+        return tmpx.copy()
+
+    Fa = trans(Fa)
+    Fb = trans(Fb)
+    Fc = trans(Fc)
+    Fd = trans(Fd)
+    k += 1
+    # Overflow
+    if Fa[-1] == Fa[-2] and Fb[-1] == Fb[-2] and Fc[-1] == Fc[-2] and Fd[-1] == Fd[-2]:
+        Fa.pop()
+        Fb.pop()
+        Fc.pop()
+        Fd.pop()
+
+
+def S(target):
+    global Fa, Fb, Fc, Fd
+    r = len(Fd)
+    trans1 = lambda x, y: (~BDD.var('q%d' % target) & x) | (BDD.var('q%d' % target) & y)
+    g = lambda x, y: (~BDD.var('q%d' % target) & x) | (BDD.var('q%d' % target) & ~y)
+    tmpa = []
+    tmpb = []
+    for i in range(r):
+        tmpa.append(trans1(Fa[i], Fc[i]))
+        tmpb.append(trans1(Fb[i], Fd[i]))
+    tmpa.append(tmpa[-1])
+    tmpb.append(tmpb[-1])
+
+
+    # def trans2(x, y):
+    #     Cx = []
+    #     Cx.append(BDD.var('q%d' % target))
+    #     tmpx = []
+    #     for i in range(r):
+    #         Gx = g(x[i], y[i])
+    #         Cx.append(Car(Gx, BDD.false, Cx[i]))
+    #         tmpx.append(Sum(Gx, BDD.false, Cx[i]))
+    #     tmpx.append(Sum(g(x[r - 1], y[r - 1]), BDD.false, Cx[r]))
+    #     return tmpx.copy()
+    #
+    Fa = tmpa.copy()
+    Fb = tmpb.copy()
+    # Fc = trans2(Fc, Fa)
+    # Fd = trans2(Fd, Fb)
+    # # Overflow
+    # if Fa[-1] == Fa[-2] and Fb[-1] == Fb[-2] and Fc[-1] == Fc[-2] and Fd[-1] == Fd[-2]:
+    #     Fa.pop()
+    #     Fb.pop()
+    #     Fc.pop()
+    #     Fd.pop()
+
+
+def printBDD():
+    print("Fa:")
+    for i in range(len(Fa)):
+        print(Fa[i].to_expr())
+    print("Fb:")
+    for i in range(len(Fb)):
+        print(Fb[i].to_expr())
+    print("Fc:")
+    for i in range(len(Fc)):
+        print(Fc[i].to_expr())
+    print("Fd:")
+    for i in range(len(Fd)):
+        print(Fd[i].to_expr())
+
+
+num_qubits = 1
+r = 2
+k = 1
 init_bdd(num_qubits, r)
 init_basis_state(0)
-print(Fa[0].to_expr())
-print(Fb[0].to_expr())
-print(Fc[0].to_expr())
-print(Fd[0].to_expr())
-Y(0)
-print(Fa[0].to_expr())
-print(Fb[0].to_expr())
-print(Fc[0].to_expr())
-print(Fd[0].to_expr())
+printBDD()
+S(0)
+printBDD()
