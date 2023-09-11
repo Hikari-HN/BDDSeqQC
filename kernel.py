@@ -92,7 +92,7 @@ def Y(target):
         Cd.append(Car(Dd, BDD.false, Cd[i]))
         tmpd.append(Sum(Dd, BDD.false, Cd[i]))
     # Overflow
-    # 先进行符号拓展，然后算出提前溢出的部分，再进行进行符号位判断
+    # 先进行符号拓展，然后算出提前溢出的部分，再进行符号位判断
     tmpa.append(Sum(d1(g(Fc[r - 1])), BDD.false, Ca[r]))
     tmpb.append(Sum(d1(g(Fd[r - 1])), BDD.false, Cb[r]))
     tmpc.append(Sum(d2(g(Fa[r - 1])), BDD.false, Cc[r]))
@@ -180,28 +180,93 @@ def S(target):
     tmpa.append(tmpa[-1])
     tmpb.append(tmpb[-1])
 
+    def trans2(x, y):
+        Cx = []
+        Cx.append(BDD.var('q%d' % target))
+        tmpx = []
+        for i in range(r):
+            Gx = g(x[i], y[i])
+            Cx.append(Car(Gx, BDD.false, Cx[i]))
+            tmpx.append(Sum(Gx, BDD.false, Cx[i]))
+        tmpx.append(Sum(g(x[r - 1], y[r - 1]), BDD.false, Cx[r]))
+        return tmpx.copy()
 
-    # def trans2(x, y):
-    #     Cx = []
-    #     Cx.append(BDD.var('q%d' % target))
-    #     tmpx = []
-    #     for i in range(r):
-    #         Gx = g(x[i], y[i])
-    #         Cx.append(Car(Gx, BDD.false, Cx[i]))
-    #         tmpx.append(Sum(Gx, BDD.false, Cx[i]))
-    #     tmpx.append(Sum(g(x[r - 1], y[r - 1]), BDD.false, Cx[r]))
-    #     return tmpx.copy()
-    #
+    Fc = trans2(Fc, Fa)
+    Fd = trans2(Fd, Fb)
     Fa = tmpa.copy()
     Fb = tmpb.copy()
-    # Fc = trans2(Fc, Fa)
-    # Fd = trans2(Fd, Fb)
-    # # Overflow
-    # if Fa[-1] == Fa[-2] and Fb[-1] == Fb[-2] and Fc[-1] == Fc[-2] and Fd[-1] == Fd[-2]:
-    #     Fa.pop()
-    #     Fb.pop()
-    #     Fc.pop()
-    #     Fd.pop()
+    # Overflow
+    if Fa[-1] == Fa[-2] and Fb[-1] == Fb[-2] and Fc[-1] == Fc[-2] and Fd[-1] == Fd[-2]:
+        Fa.pop()
+        Fb.pop()
+        Fc.pop()
+        Fd.pop()
+
+
+def T(target):
+    global Fa, Fb, Fc, Fd
+    r = len(Fd)
+    trans1 = lambda x, y: (~BDD.var('q%d' % target) & x) | (BDD.var('q%d' % target) & y)
+    g = lambda x, y: (~BDD.var('q%d' % target) & x) | (BDD.var('q%d' % target) & ~y)
+    tmpa = []
+    tmpb = []
+    tmpc = []
+    for i in range(r):
+        tmpa.append(trans1(Fa[i], Fb[i]))
+        tmpb.append(trans1(Fb[i], Fc[i]))
+        tmpc.append(trans1(Fc[i], Fd[i]))
+    tmpa.append(tmpa[-1])
+    tmpb.append(tmpb[-1])
+    tmpc.append(tmpc[-1])
+    Cd = []
+    Cd.append(BDD.var('q%d' % target))
+    tmpd = []
+    for i in range(r):
+        Gd = g(Fd[i], Fa[i])
+        Cd.append(Car(Gd, BDD.false, Cd[i]))
+        tmpd.append(Sum(Gd, BDD.false, Cd[i]))
+    tmpd.append(Sum(g(Fd[r - 1], Fa[r - 1]), BDD.false, Cd[r]))
+    Fa = tmpa.copy()
+    Fb = tmpb.copy()
+    Fc = tmpc.copy()
+    Fd = tmpd.copy()
+    # Overflow
+    if Fa[-1] == Fa[-2] and Fb[-1] == Fb[-2] and Fc[-1] == Fc[-2] and Fd[-1] == Fd[-2]:
+        Fa.pop()
+        Fb.pop()
+        Fc.pop()
+        Fd.pop()
+
+
+def X2P(target):
+    # Rx(pi/2) gate
+    global Fa, Fb, Fc, Fd, k
+    r = len(Fd)
+    d = lambda x: (BDD.var('q%d' % target) & BDD.let({'q%d' % target: BDD.false}, x)) | (
+            ~BDD.var('q%d' % target) & BDD.let({'q%d' % target: BDD.true}, x))
+
+    def trans(x, y, C0):
+        Cx = []
+        Cx.append(C0)
+        tmpx = []
+        for i in range(r):
+            Dx = d(x[i])
+            Cx.append(Car(y[i], ~Dx, Cx[i]))
+            tmpx.append(Sum(y[i], ~Dx, Cx[i]))
+        tmpx.append(Sum(y[r - 1], ~d(x[r-1]), Cx[r]))
+        return tmpx.copy()
+
+    Fa = trans(Fc, Fa, BDD.true)
+    Fb = trans(Fd, Fb, BDD.true)
+    Fc = trans(Fa, Fc, BDD.false)
+    Fd = trans(Fb, Fd, BDD.false)
+    k += 1
+    # Overflow
+    if Fa[-1] == Fa[-2] and Fb[-1] == Fb[-2] and Fc[-1] == Fc[-2] and Fd[-1] == Fd[-2]:
+        Fa.pop()
+        Fb.pop()
+        Fc.pop()
+        Fd.pop()
 
 
 def printBDD():
@@ -225,5 +290,5 @@ k = 1
 init_bdd(num_qubits, r)
 init_basis_state(0)
 printBDD()
-S(0)
+X2P(0)
 printBDD()
