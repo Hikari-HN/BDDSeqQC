@@ -7,6 +7,7 @@
 @Date    ：2023/8/30 14:31 
 """
 from dd import autoref as _bdd
+from math import ceil, log2
 
 
 def init_bdd(n, r):
@@ -32,7 +33,7 @@ def init_basis_state(basis):
     assert basis < (1 << n), "Basis state is out of range!"
     tmp = dict()
     for i in range(n):
-        tmp['q%d' % i] = bool((basis >> i) & 1)
+        tmp['q%d' % i] = bool((basis >> (n - 1 - i)) & 1)
     Fd[0] = BDD.cube(tmp)
 
 
@@ -245,21 +246,36 @@ def X2P(target):
     d = lambda x: (BDD.var('q%d' % target) & BDD.let({'q%d' % target: BDD.false}, x)) | (
             ~BDD.var('q%d' % target) & BDD.let({'q%d' % target: BDD.true}, x))
 
-    def trans(x, y, C0):
+    def trans1(x, y):
         Cx = []
-        Cx.append(C0)
+        Cx.append(BDD.true)
         tmpx = []
         for i in range(r):
             Dx = d(x[i])
             Cx.append(Car(y[i], ~Dx, Cx[i]))
             tmpx.append(Sum(y[i], ~Dx, Cx[i]))
-        tmpx.append(Sum(y[r - 1], ~d(x[r-1]), Cx[r]))
+        tmpx.append(Sum(y[r - 1], ~d(x[r - 1]), Cx[r]))
         return tmpx.copy()
 
-    Fa = trans(Fc, Fa, BDD.true)
-    Fb = trans(Fd, Fb, BDD.true)
-    Fc = trans(Fa, Fc, BDD.false)
-    Fd = trans(Fb, Fd, BDD.false)
+    def trans2(x, y):
+        Cx = []
+        Cx.append(BDD.false)
+        tmpx = []
+        for i in range(r):
+            Dx = d(x[i])
+            Cx.append(Car(y[i], Dx, Cx[i]))
+            tmpx.append(Sum(y[i], Dx, Cx[i]))
+        tmpx.append(Sum(y[r - 1], d(x[r - 1]), Cx[r]))
+        return tmpx.copy()
+
+    tmpa = trans1(Fc, Fa)
+    tmpb = trans1(Fd, Fb)
+    tmpc = trans2(Fa, Fc)
+    tmpd = trans2(Fb, Fd)
+    Fa = tmpa.copy()
+    Fb = tmpb.copy()
+    Fc = tmpc.copy()
+    Fd = tmpd.copy()
     k += 1
     # Overflow
     if Fa[-1] == Fa[-2] and Fb[-1] == Fb[-2] and Fc[-1] == Fc[-2] and Fd[-1] == Fd[-2]:
@@ -267,6 +283,123 @@ def X2P(target):
         Fb.pop()
         Fc.pop()
         Fd.pop()
+
+
+def Y2P(target):
+    # Ry(pi/2) gate
+    global Fa, Fb, Fc, Fd, k
+    r = len(Fd)
+    g = lambda x: BDD.let({'q%d' % target: BDD.false}, x)
+    d = lambda x: (BDD.var('q%d' % target) & x) | (~BDD.var('q%d' % target) & ~BDD.let({'q%d' % target: BDD.true}, x))
+
+    def trans(x):
+        Cx = []
+        Cx.append(~BDD.var('q%d' % target))
+        tmpx = []
+        for i in range(r):
+            Gx = g(x[i])
+            Dx = d(x[i])
+            Cx.append(Car(Gx, Dx, Cx[i]))
+            tmpx.append(Sum(Gx, Dx, Cx[i]))
+        tmpx.append(Sum(g(x[r - 1]), d(x[r - 1]), Cx[r]))
+        return tmpx.copy()
+
+    Fa = trans(Fa)
+    Fb = trans(Fb)
+    Fc = trans(Fc)
+    Fd = trans(Fd)
+    k += 1
+    # Overflow
+    if Fa[-1] == Fa[-2] and Fb[-1] == Fb[-2] and Fc[-1] == Fc[-2] and Fd[-1] == Fd[-2]:
+        Fa.pop()
+        Fb.pop()
+        Fc.pop()
+        Fd.pop()
+
+
+def CNOT(control, target):
+    global Fa, Fb, Fc, Fd
+    r = len(Fd)
+
+    def trans(x):
+        return (~BDD.var('q%d' % control) & x) | (BDD.var('q%d' % control) & BDD.var('q%d' % target) & BDD.let(
+            {'q%d' % control: BDD.true, 'q%d' % target: BDD.false}, x)) | (
+                BDD.var('q%d' % control) & ~BDD.var('q%d' % target) & BDD.let(
+            {'q%d' % control: BDD.true, 'q%d' % target: BDD.true}, x))
+
+    for i in range(r):
+        Fa[i] = trans(Fa[i])
+        Fb[i] = trans(Fb[i])
+        Fc[i] = trans(Fc[i])
+        Fd[i] = trans(Fd[i])
+
+
+def CZ(control, target):
+    global Fa, Fb, Fc, Fd
+    r = len(Fd)
+    g = lambda x: (~(BDD.var('q%d' % control) & BDD.var('q%d' % target)) & x) | (
+            BDD.var('q%d' % control) & BDD.var('q%d' % target) & ~x)
+
+    def trans(x):
+        Cx = []
+        Cx.append(BDD.var('q%d' % control) & BDD.var('q%d' % target))
+        tmpx = []
+        for i in range(r):
+            Gx = g(x[i])
+            Cx.append(Car(Gx, BDD.false, Cx[i]))
+            tmpx.append(Sum(Gx, BDD.false, Cx[i]))
+        tmpx.append(Sum(g(x[r - 1]), BDD.false, Cx[r]))
+        return tmpx.copy()
+
+    Fa = trans(Fa)
+    Fb = trans(Fb)
+    Fc = trans(Fc)
+    Fd = trans(Fd)
+    # Overflow
+    if Fa[-1] == Fa[-2] and Fb[-1] == Fb[-2] and Fc[-1] == Fc[-2] and Fd[-1] == Fd[-2]:
+        Fa.pop()
+        Fb.pop()
+        Fc.pop()
+        Fd.pop()
+
+
+def Toffoli(control1, control2, target):
+    # CCNOT gate
+    global Fa, Fb, Fc, Fd
+    r = len(Fd)
+
+    def trans(x):
+        return (~(BDD.var('q%d' % control1) & BDD.var('q%d' % control2)) & x) | (
+                BDD.var('q%d' % control1) & BDD.var('q%d' % control2) & BDD.var('q%d' % target) & BDD.let(
+            {'q%d' % control1: BDD.true, 'q%d' % control2: BDD.true, 'q%d' % target: BDD.false}, x)) | (
+                BDD.var('q%d' % control1) & BDD.var('q%d' % control2) & ~BDD.var('q%d' % target) & BDD.let(
+            {'q%d' % control1: BDD.true, 'q%d' % control2: BDD.true, 'q%d' % target: BDD.true}, x))
+
+    for i in range(r):
+        Fa[i] = trans(Fa[i])
+        Fb[i] = trans(Fb[i])
+        Fc[i] = trans(Fc[i])
+        Fd[i] = trans(Fd[i])
+
+
+def Fredkin(control, target1, target2):
+    # CSWAP gate
+    global Fa, Fb, Fc, Fd
+    r = len(Fd)
+
+    def trans(x):
+        return (~(BDD.var('q%d' % control) & BDD.apply('^', BDD.var('q%d' % target1),
+                                                       BDD.var('q%d' % target2))) & x) | (
+                BDD.var('q%d' % control) & BDD.var('q%d' % target1) & ~BDD.var('q%d' % target2) & BDD.let(
+            {'q%d' % control: BDD.true, 'q%d' % target1: BDD.false, 'q%d' % target2: BDD.true}, x)) | (
+                BDD.var('q%d' % control) & ~BDD.var('q%d' % target1) & BDD.var('q%d' % target2) & BDD.let(
+            {'q%d' % control: BDD.true, 'q%d' % target1: BDD.true, 'q%d' % target2: BDD.false}, x))
+
+    for i in range(r):
+        Fa[i] = trans(Fa[i])
+        Fb[i] = trans(Fb[i])
+        Fc[i] = trans(Fc[i])
+        Fd[i] = trans(Fd[i])
 
 
 def printBDD():
@@ -284,11 +417,39 @@ def printBDD():
         print(Fd[i].to_expr())
 
 
-num_qubits = 1
-r = 2
-k = 1
+def get_total_bdd():
+    global Fa, Fb, Fc, Fd
+    r = len(Fd)
+    m = ceil(log2(r)) + 2  # The number of index Boolean variables
+    for i in range(m):
+        BDD.add_var('x%d' % i)
+    g = []
+    for i in range(r):
+        tmp = dict()
+        for j in range(2, m):
+            tmp['x%d' % j] = bool((i >> (j - 2)) & 1)
+        g.append(BDD.cube(tmp))
+    FA = BDD.false
+    FB = BDD.false
+    FC = BDD.false
+    FD = BDD.false
+    for i in range(r):
+        FA = BDD.apply('|', FA, g[i] & Fa[i])
+        FB = BDD.apply('|', FB, g[i] & Fb[i])
+        FC = BDD.apply('|', FC, g[i] & Fc[i])
+        FD = BDD.apply('|', FD, g[i] & Fd[i])
+    x0 = BDD.var('x0')
+    x1 = BDD.var('x1')
+    return (x0 & x1 & FA) | (x0 & ~x1 & FB) | (~x0 & x1 & FC) | (~x0 & ~x1 & FD)
+
+
+def measure():
+    pass
+
+
+num_qubits = 3
+r = 32
 init_bdd(num_qubits, r)
 init_basis_state(0)
-printBDD()
-X2P(0)
-printBDD()
+X(0)
+# print(get_total_bdd().to_expr())
