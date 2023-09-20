@@ -156,7 +156,9 @@ cython_debug/
 # outputs
 *.json
 *.pdf
-./main.py
+dd-0.5.7.tar.gz
+dd-0.5.7/
+main.py
 
 # PyCharm
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can

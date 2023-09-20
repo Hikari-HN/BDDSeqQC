@@ -6,33 +6,34 @@
 @Author  ：ZiHao Li
 @Date    ：2023/8/30 14:31 
 """
+from math import ceil, log2, sqrt, pi
+import cmath as cm
 from dd import autoref as _bdd
-from math import ceil, log2
 
 
 class BDDSim:
     def __init__(self, n, r):
         self.BDD = _bdd.BDD()
-        for i in range(n):
+        self.n = n
+        self.r = r
+        for i in range(self.n):
             self.BDD.add_var('q%d' % i)
         self.Fa = []
         self.Fb = []
         self.Fc = []
         self.Fd = []
-        for i in range(r):
+        for i in range(self.r):
             self.Fa.append(self.BDD.false)
             self.Fb.append(self.BDD.false)
             self.Fc.append(self.BDD.false)
             self.Fd.append(self.BDD.false)
         self.k = 0
-        self.r = r
 
     def init_basis_state(self, basis):
-        n = len(self.BDD.vars)
-        assert basis < (1 << n), "Basis state is out of range!"
+        assert basis < (1 << self.n), "Basis state is out of range!"
         tmp = dict()
-        for i in range(n):
-            tmp['q%d' % i] = bool((basis >> (n - 1 - i)) & 1)
+        for i in range(self.n):
+            tmp['q%d' % i] = bool((basis >> (self.n - 1 - i)) & 1)
         self.Fd[0] = self.BDD.cube(tmp)
 
     def Car(self, A, B, C):
@@ -50,7 +51,7 @@ class BDDSim:
             self.Fb[i] = trans(self.Fb[i])
             self.Fc[i] = trans(self.Fc[i])
             self.Fd[i] = trans(self.Fd[i])
-        self.r = len(self.Fd)
+        self.simplify_tail()
 
     def Y(self, target):
         r = len(self.Fd)
@@ -58,50 +59,39 @@ class BDDSim:
                 ~self.BDD.var('q%d' % target) & self.BDD.let({'q%d' % target: self.BDD.true}, x))
         d1 = lambda x: (self.BDD.var('q%d' % target) & x) | (~self.BDD.var('q%d' % target) & ~x)
         d2 = lambda x: (self.BDD.var('q%d' % target) & ~x) | (~self.BDD.var('q%d' % target) & x)
-        Ca = []
-        Ca.append(~self.BDD.var('q%d' % target))
-        tmpa = []
-        for i in range(r):
-            Da = d1(g(self.Fc[i]))
-            Ca.append(self.Car(Da, self.BDD.false, Ca[i]))
-            tmpa.append(self.Sum(Da, self.BDD.false, Ca[i]))
-        Cb = []
-        Cb.append(~self.BDD.var('q%d' % target))
-        tmpb = []
-        for i in range(r):
-            Db = d1(g(self.Fd[i]))
-            Cb.append(self.Car(Db, self.BDD.false, Cb[i]))
-            tmpb.append(self.Sum(Db, self.BDD.false, Cb[i]))
-        Cc = []
-        Cc.append(self.BDD.var('q%d' % target))
-        tmpc = []
-        for i in range(r):
-            Dc = d2(g(self.Fa[i]))
-            Cc.append(self.Car(Dc, self.BDD.false, Cc[i]))
-            tmpc.append(self.Sum(Dc, self.BDD.false, Cc[i]))
-        Cd = []
-        Cd.append(self.BDD.var('q%d' % target))
-        tmpd = []
-        for i in range(r):
-            Dd = d2(g(self.Fb[i]))
-            Cd.append(self.Car(Dd, self.BDD.false, Cd[i]))
-            tmpd.append(self.Sum(Dd, self.BDD.false, Cd[i]))
-        # Overflow
-        # 先进行符号拓展，然后算出提前溢出的部分，再进行符号位判断
-        tmpa.append(self.Sum(d1(g(self.Fc[r - 1])), self.BDD.false, Ca[r]))
-        tmpb.append(self.Sum(d1(g(self.Fd[r - 1])), self.BDD.false, Cb[r]))
-        tmpc.append(self.Sum(d2(g(self.Fa[r - 1])), self.BDD.false, Cc[r]))
-        tmpd.append(self.Sum(d2(g(self.Fb[r - 1])), self.BDD.false, Cd[r]))
-        if tmpa[-1] == tmpa[-2] and tmpb[-1] == tmpb[-2] and tmpc[-1] == tmpc[-2] and tmpd[-1] == tmpd[-2]:
-            tmpa.pop()
-            tmpb.pop()
-            tmpc.pop()
-            tmpd.pop()
+
+        def trans1(x):
+            Cx = []
+            Cx.append(~self.BDD.var('q%d' % target))
+            tmpx = []
+            for i in range(r):
+                Dx = d1(g(x[i]))
+                Cx.append(self.Car(Dx, self.BDD.false, Cx[i]))
+                tmpx.append(self.Sum(Dx, self.BDD.false, Cx[i]))
+            tmpx.append(self.Sum(d1(g(x[r - 1])), self.BDD.false, Cx[r]))
+            return tmpx.copy()
+
+        def trans2(x):
+            Cx = []
+            Cx.append(self.BDD.var('q%d' % target))
+            tmpx = []
+            for i in range(r):
+                Dx = d2(g(x[i]))
+                Cx.append(self.Car(Dx, self.BDD.false, Cx[i]))
+                tmpx.append(self.Sum(Dx, self.BDD.false, Cx[i]))
+            tmpx.append(self.Sum(d2(g(x[r - 1])), self.BDD.false, Cx[r]))
+            return tmpx.copy()
+
+        tmpa = trans1(self.Fc)
+        tmpb = trans1(self.Fd)
+        tmpc = trans2(self.Fa)
+        tmpd = trans2(self.Fb)
         self.Fa = tmpa.copy()
         self.Fb = tmpb.copy()
         self.Fc = tmpc.copy()
         self.Fd = tmpd.copy()
-        self.r = len(self.Fd)
+        self.simplify_overflow()  # Overflow
+        self.simplify_tail()
 
     def Z(self, target):
         r = len(self.Fd)
@@ -122,14 +112,8 @@ class BDDSim:
         self.Fb = trans(self.Fb)
         self.Fc = trans(self.Fc)
         self.Fd = trans(self.Fd)
-        # Overflow
-        if self.Fa[-1] == self.Fa[-2] and self.Fb[-1] == self.Fb[-2] and self.Fc[-1] == self.Fc[-2] and self.Fd[-1] == \
-                self.Fd[-2]:
-            self.Fa.pop()
-            self.Fb.pop()
-            self.Fc.pop()
-            self.Fd.pop()
-        self.r = len(self.Fd)
+        self.simplify_overflow()  # Overflow
+        self.simplify_tail()
 
     def H(self, target):
         r = len(self.Fd)
@@ -154,14 +138,8 @@ class BDDSim:
         self.Fc = trans(self.Fc)
         self.Fd = trans(self.Fd)
         self.k += 1
-        # Overflow
-        if self.Fa[-1] == self.Fa[-2] and self.Fb[-1] == self.Fb[-2] and self.Fc[-1] == self.Fc[-2] and self.Fd[-1] == \
-                self.Fd[-2]:
-            self.Fa.pop()
-            self.Fb.pop()
-            self.Fc.pop()
-            self.Fd.pop()
-        self.r = len(self.Fd)
+        self.simplify_overflow()  # Overflow
+        self.simplify_tail()
 
     def S(self, target):
         r = len(self.Fd)
@@ -190,14 +168,8 @@ class BDDSim:
         self.Fd = trans2(self.Fd, self.Fb)
         self.Fa = tmpa.copy()
         self.Fb = tmpb.copy()
-        # Overflow
-        if self.Fa[-1] == self.Fa[-2] and self.Fb[-1] == self.Fb[-2] and self.Fc[-1] == self.Fc[-2] and self.Fd[-1] == \
-                self.Fd[-2]:
-            self.Fa.pop()
-            self.Fb.pop()
-            self.Fc.pop()
-            self.Fd.pop()
-        self.r = len(self.Fd)
+        self.simplify_overflow()  # Overflow
+        self.simplify_tail()
 
     def T(self, target):
         r = len(self.Fd)
@@ -225,14 +197,8 @@ class BDDSim:
         self.Fb = tmpb.copy()
         self.Fc = tmpc.copy()
         self.Fd = tmpd.copy()
-        # Overflow
-        if self.Fa[-1] == self.Fa[-2] and self.Fb[-1] == self.Fb[-2] and self.Fc[-1] == self.Fc[-2] and self.Fd[-1] == \
-                self.Fd[-2]:
-            self.Fa.pop()
-            self.Fb.pop()
-            self.Fc.pop()
-            self.Fd.pop()
-        self.r = len(self.Fd)
+        self.simplify_overflow()  # Overflow
+        self.simplify_tail()
 
     def X2P(self, target):
         # Rx(pi/2) gate
@@ -271,18 +237,11 @@ class BDDSim:
         self.Fc = tmpc.copy()
         self.Fd = tmpd.copy()
         self.k += 1
-        # Overflow
-        if self.Fa[-1] == self.Fa[-2] and self.Fb[-1] == self.Fb[-2] and self.Fc[-1] == self.Fc[-2] and self.Fd[-1] == \
-                self.Fd[-2]:
-            self.Fa.pop()
-            self.Fb.pop()
-            self.Fc.pop()
-            self.Fd.pop()
-        self.r = len(self.Fd)
+        self.simplify_overflow()  # Overflow
+        self.simplify_tail()
 
     def Y2P(self, target):
         # Ry(pi/2) gate
-        # TODO BUGGY
         r = len(self.Fd)
         g = lambda x: self.BDD.let({'q%d' % target: self.BDD.false}, x)
         d = lambda x: (self.BDD.var('q%d' % target) & x) | (
@@ -305,14 +264,8 @@ class BDDSim:
         self.Fc = trans(self.Fc)
         self.Fd = trans(self.Fd)
         self.k += 1
-        # Overflow
-        if self.Fa[-1] == self.Fa[-2] and self.Fb[-1] == self.Fb[-2] and self.Fc[-1] == self.Fc[-2] and self.Fd[-1] == \
-                self.Fd[-2]:
-            self.Fa.pop()
-            self.Fb.pop()
-            self.Fc.pop()
-            self.Fd.pop()
-        self.r = len(self.Fd)
+        self.simplify_overflow()  # Overflow
+        self.simplify_tail()
 
     def CNOT(self, control, target):
         r = len(self.Fd)
@@ -329,7 +282,7 @@ class BDDSim:
             self.Fb[i] = trans(self.Fb[i])
             self.Fc[i] = trans(self.Fc[i])
             self.Fd[i] = trans(self.Fd[i])
-        self.r = len(self.Fd)
+        self.simplify_tail()
 
     def CZ(self, control, target):
         r = len(self.Fd)
@@ -351,14 +304,8 @@ class BDDSim:
         self.Fb = trans(self.Fb)
         self.Fc = trans(self.Fc)
         self.Fd = trans(self.Fd)
-        # Overflow
-        if self.Fa[-1] == self.Fa[-2] and self.Fb[-1] == self.Fb[-2] and self.Fc[-1] == self.Fc[-2] and self.Fd[-1] == \
-                self.Fd[-2]:
-            self.Fa.pop()
-            self.Fb.pop()
-            self.Fc.pop()
-            self.Fd.pop()
-        self.r = len(self.Fd)
+        self.simplify_overflow()  # Overflow
+        self.simplify_tail()
 
     def Toffoli(self, control1, control2, target):
         # CCNOT gate
@@ -378,6 +325,7 @@ class BDDSim:
             self.Fb[i] = trans(self.Fb[i])
             self.Fc[i] = trans(self.Fc[i])
             self.Fd[i] = trans(self.Fd[i])
+        self.simplify_tail()
 
     def Fredkin(self, control, target1, target2):
         # CSWAP gate
@@ -399,15 +347,14 @@ class BDDSim:
             self.Fb[i] = trans(self.Fb[i])
             self.Fc[i] = trans(self.Fc[i])
             self.Fd[i] = trans(self.Fd[i])
-        self.r = len(self.Fd)
+        self.simplify_tail()
 
     def get_total_bdd(self):
-        r = len(self.Fd)
-        m = ceil(log2(r)) + 2  # The number of index Boolean variables
+        m = ceil(log2(self.r)) + 2  # The number of index Boolean variables
         for i in range(m):
             self.BDD.add_var('x%d' % i)
         g = []
-        for i in range(r):
+        for i in range(self.r):
             tmp = dict()
             for j in range(2, m):
                 tmp['x%d' % j] = bool((i >> (j - 2)) & 1)
@@ -416,7 +363,7 @@ class BDDSim:
         FB = self.BDD.false
         FC = self.BDD.false
         FD = self.BDD.false
-        for i in range(r):
+        for i in range(self.r):
             FA = self.BDD.apply('|', FA, g[i] & self.Fa[i])
             FB = self.BDD.apply('|', FB, g[i] & self.Fb[i])
             FC = self.BDD.apply('|', FC, g[i] & self.Fc[i])
@@ -425,8 +372,80 @@ class BDDSim:
         x1 = self.BDD.var('x1')
         return (x0 & x1 & FA) | (x0 & ~x1 & FB) | (~x0 & x1 & FC) | (~x0 & ~x1 & FD)
 
-    def measure(self):
-        pass
+    def get_prob(self, target_list, result_list):
+        """
+        target_list: the list of target qubits. NOTICE: Elements in a list cannot be the same!
+        result_list: the list of measurement results.
+        """
+        if len(target_list) > len(result_list):
+            target_list = target_list[:len(result_list)]
+        if len(target_list) < self.n:
+            next_list = self.get_next_list(target_list)
+            return self.get_prob(next_list, result_list + [0]) + self.get_prob(next_list, result_list + [1])
+
+        F = self.get_total_bdd()
+        bool_list = [self.BDD.false, self.BDD.true]
+        for i in range(len(target_list)):
+            F = self.BDD.let({'q%d' % target_list[i]: bool_list[result_list[i]]}, F)
+        FA = self.BDD.let({'x0': self.BDD.true, 'x1': self.BDD.true}, F)
+        FB = self.BDD.let({'x0': self.BDD.true, 'x1': self.BDD.false}, F)
+        FC = self.BDD.let({'x0': self.BDD.false, 'x1': self.BDD.true}, F)
+        FD = self.BDD.let({'x0': self.BDD.false, 'x1': self.BDD.false}, F)
+        a = self.get_value(FA)
+        b = self.get_value(FB)
+        c = self.get_value(FC)
+        d = self.get_value(FD)
+        w = cm.exp(1j * pi / 4)
+        amplitude = (a * w ** 3 + b * w ** 2 + c * w + d) / pow(sqrt(2), self.k)
+        return abs(amplitude) ** 2
+
+    def measure(self, target_list, result_list):
+        tmp = target_list.copy()
+        print("The probability of measuring %s and getting %s is %f." % (
+            target_list, result_list, self.get_prob(tmp, result_list)))
+
+    def get_next_list(self, target_list):
+        for i in range(self.n):
+            if i not in target_list:
+                target_list.append(i)
+                break
+        return target_list
+
+    def get_value(self, bdd):
+        m = ceil(log2(self.r)) + 2  # The number of index Boolean variables
+        bool_list = [self.BDD.false, self.BDD.true]
+        binary_list = []
+        for i in range(self.r):
+            tmp = dict()
+            for j in range(2, m):
+                tmp['x%d' % j] = bool_list[(i >> (j - 2)) & 1]
+            flag = self.BDD.let(tmp, bdd)
+            if flag == self.BDD.true:
+                binary_list.append(1)
+            else:
+                binary_list.append(0)
+        if binary_list[-1] == 0:
+            return sum([(1 << i) if binary_list[i] == 1 else 0 for i in range(len(binary_list) - 1)])
+        else:
+            return -sum([(1 << i) if binary_list[i] == 0 else 0 for i in range(len(binary_list) - 1)]) - 1
+
+    def simplify_tail(self):
+        if self.Fa[0] == self.BDD.false and self.Fb[0] == self.BDD.false and self.Fc[0] == self.BDD.false and self.Fd[
+            0] == self.BDD.false:
+            self.Fa = self.Fa[1:]
+            self.Fb = self.Fb[1:]
+            self.Fc = self.Fc[1:]
+            self.Fd = self.Fd[1:]
+            self.k -= 2
+        self.r = len(self.Fd)
+
+    def simplify_overflow(self):
+        if self.Fa[-1] == self.Fa[-2] and self.Fb[-1] == self.Fb[-2] and self.Fc[-1] == self.Fc[-2] and self.Fd[-1] == \
+                self.Fd[-2]:
+            self.Fa.pop()
+            self.Fb.pop()
+            self.Fc.pop()
+            self.Fd.pop()
 
     def print_bdd(self):
         print("Fa:")
@@ -443,8 +462,18 @@ class BDDSim:
             print(self.Fd[i].to_expr())
 
 
-Sim = BDDSim(3, 2)
-Sim.init_basis_state(5)
-Sim.print_bdd()
-Sim.Fredkin(0, 1, 2)
-Sim.print_bdd()
+Sim = BDDSim(5, 2)
+Sim.init_basis_state(0)
+Sim.CNOT(0, 1)
+Sim.CNOT(1, 2)
+Sim.CNOT(2, 3)
+Sim.H(0)
+Sim.H(1)
+Sim.H(2)
+Sim.H(3)
+Sim.CNOT(0, 4)
+Sim.CNOT(1, 4)
+Sim.CNOT(2, 4)
+Sim.CNOT(3, 4)
+Sim.measure([0], [1])
+print(Sim.r)
