@@ -8,7 +8,7 @@
 """
 from math import ceil, log2, sqrt, pi
 import cmath as cm
-from dd import autoref as _bdd
+from dd import cudd as _bdd
 
 
 class BDDSim:
@@ -399,9 +399,28 @@ class BDDSim:
         amplitude = (a * w ** 3 + b * w ** 2 + c * w + d) / pow(sqrt(2), self.k)
         return abs(amplitude) ** 2
 
+    def get_amplitude(self, cpt_basis):
+        F = self.get_total_bdd()
+        bool_list = [self.BDD.false, self.BDD.true]
+        tmp = dict()
+        for i in range(self.n):
+            tmp['q%d' % i] = bool_list[(cpt_basis >> (self.n - 1 - i)) & 1]
+        F = self.BDD.let(tmp, F)
+        FA = self.BDD.let({'x0': self.BDD.true, 'x1': self.BDD.true}, F)
+        FB = self.BDD.let({'x0': self.BDD.true, 'x1': self.BDD.false}, F)
+        FC = self.BDD.let({'x0': self.BDD.false, 'x1': self.BDD.true}, F)
+        FD = self.BDD.let({'x0': self.BDD.false, 'x1': self.BDD.false}, F)
+        a = self.get_value(FA)
+        b = self.get_value(FB)
+        c = self.get_value(FC)
+        d = self.get_value(FD)
+        w = cm.exp(1j * pi / 4)
+        amplitude = (a * w ** 3 + b * w ** 2 + c * w + d) / pow(sqrt(2), self.k)
+        return amplitude
+
     def measure(self, target_list, result_list):
         tmp = target_list.copy()
-        print("The probability of measuring %s and getting %s is %f." % (
+        print("The probability of measuring qubits %s and getting results %s is %f." % (
             target_list, result_list, self.get_prob(tmp, result_list)))
 
     def get_next_list(self, target_list):
@@ -448,6 +467,9 @@ class BDDSim:
             self.Fd.pop()
 
     def print_bdd(self):
+        """
+            Only can be used when import autoref instead of cudd!
+        """
         print("Fa:")
         for i in range(len(self.Fa)):
             print(self.Fa[i].to_expr())
@@ -461,19 +483,6 @@ class BDDSim:
         for i in range(len(self.Fd)):
             print(self.Fd[i].to_expr())
 
-
-Sim = BDDSim(5, 2)
-Sim.init_basis_state(0)
-Sim.CNOT(0, 1)
-Sim.CNOT(1, 2)
-Sim.CNOT(2, 3)
-Sim.H(0)
-Sim.H(1)
-Sim.H(2)
-Sim.H(3)
-Sim.CNOT(0, 4)
-Sim.CNOT(1, 4)
-Sim.CNOT(2, 4)
-Sim.CNOT(3, 4)
-Sim.measure([0], [1])
-print(Sim.r)
+    def print_state_vec(self):
+        for i in range(1 << self.n):
+            print("The amplitude of |%s> is" % bin(i)[2:].zfill(self.n), self.get_amplitude(i), end='.\n')
